@@ -8,11 +8,11 @@ go build
 ```
 
 ## Usage
-Start this service on __one__  nodes with
+Start this service on __one__  node listening on all ips on port 3000 with
 ```bash
-adjacency_service --listen-address "example.com:3000" --srv "_service._tcp.exmaple.com
+adjacency_service --listen-address ":3000" --srv "_service._tcp.exmaple.com
 ```
-Do this for all nodes. Keep in mind, that the _listen-address_ should be different for all nodes and the _srv_ needs to resolve to all the urls of the nodes.
+Do this for all nodes. Keep in mind, that _srv_ needs to resolve to all the urls of the nodes.
 
 To get the adjancency matrix use curl e.g.
 ```bash
