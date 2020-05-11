@@ -51,6 +51,7 @@ func getAdjacencyVectorHTTP(urls []*url.URL) []LatencyMap {
 	}
 	return lats
 }
+
 func srv2url(srvs []string, path string) ([]*url.URL, error) {
 	_, addrs, err := net.LookupSRV(strings.TrimLeft(srvs[0], "_"), strings.TrimLeft(srvs[1], "_"), srvs[2])
 	if err != nil {
@@ -93,7 +94,6 @@ func pingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getVectorFrom(url *url.URL) ([]LatencyMap, error) {
-	//resp, err := http.Get("http://10.0.0.2:3000/vector")
 	resp, err := http.Get(url.String())
 	if err != nil {
 		return nil, err
@@ -148,6 +148,7 @@ func AdjacencyMatrix2String(m []LatencyMapVector) string {
 	}
 	return s
 }
+
 func collectAllHandler(srv []string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		m, err := getAdjacencyMatrix(srv)
@@ -166,18 +167,15 @@ var listenAddr *string = flag.String("listen-address", ":3000", "The service wil
 
 func main() {
 	flag.Parse()
-	fmt.Println("srv: " + *srvRecord)
-	fmt.Printf("listening on %s\n", *listenAddr)
 	srv := strings.SplitN(*srvRecord, ".", 3)
 	if len(srv) != 3 {
 		fmt.Printf("%q is not a valid srv record name\n", *srvRecord)
 		return
 	}
-
 	m := http.NewServeMux()
-
 	m.HandleFunc("/vector", vectorHandler(srv))
 	m.HandleFunc("/ping", pingHandler)
 	m.HandleFunc("/", collectAllHandler(srv))
+	fmt.Printf("listening on %s\n", *listenAddr)
 	http.ListenAndServe(*listenAddr, m)
 }
