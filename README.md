@@ -7,12 +7,12 @@ Compile with
 go build
 ```
 
-## usage
-Start this service on all nodes with
+## Usage
+Start this service on __one__  nodes with
 ```bash
 adjacency_service --listen-address "example.com:3000" --srv "_service._tcp.exmaple.com
 ```
-Keep in mind, that the _listen-address_ should be diffrent for all nodes and the _srv_ needs to resolve to all the urls of the nodes.
+Do this for all nodes. Keep in mind, that the _listen-address_ should be different for all nodes and the _srv_ needs to resolve to all the urls of the nodes.
 
 To get the adjancency matrix use curl e.g.
 ```bash
@@ -29,4 +29,4 @@ To check if service is running at all, use
 ```bash
 curl exmaple.com:3000/ping
 ```
-The response sould be pong. 
+The response sould be _pong_. 
