@@ -27,17 +27,14 @@ type LatencyMapVector struct {
 
 func timeHTTPRequest(url string, ch chan LatencyMap) {
 	start := time.Now()
-	fmt.Println("start get")
 	resp, err := http.Get(url)
-	fmt.Println("end get with err " + err.Error())
-	//defer resp.Body.Close()
 	end := time.Now()
 	diff := end.Sub(start)
 	lat := new(LatencyMap)
 	lat.Ip = url
 	lat.Latency = diff
 	if err != nil {
-		lat.HttpStatusCode = 403 //r	lat.Latency = 1 << 31
+		lat.HttpStatusCode = 403
 	} else {
 		lat.HttpStatusCode = resp.StatusCode
 	}
@@ -77,12 +74,10 @@ func srv2url(srvs []string, path string, query string) ([]*url.URL, error) {
 
 func vectorHandler(srv []string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		srv_target := srv
 		var err error
 		if r.URL.Query()["srv"] != nil {
 			srv_target, err = parse_SRV(r)
-
 			fmt.Println("using new srv in vector handler: " + strings.Join(srv_target, "."))
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -121,7 +116,7 @@ func getVectorFrom(url *url.URL) ([]LatencyMap, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, errors.New("srv does not resolve")
+		return nil, errors.New("srv does not resolve\n")
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -130,7 +125,7 @@ func getVectorFrom(url *url.URL) ([]LatencyMap, error) {
 	var lats []LatencyMap
 	err = json.Unmarshal((body), &lats)
 	if err != nil {
-		return nil, errors.New("response from node has wrong format: Maybe is not running this service?")
+		return nil, errors.New("response from node has wrong format: Maybe is not running this service?\n")
 	}
 	return lats, nil
 }
@@ -147,8 +142,6 @@ func getAdjacencyMatrix(srv, srv_target []string) ([]LatencyMapVector, error) {
 		fmt.Println(u)
 		vec, err := getVectorFrom(u)
 		if err != nil {
-			fmt.Print("error in ln 141")
-			fmt.Println(err)
 			return nil, err
 		}
 
@@ -170,10 +163,7 @@ func AdjacencyMatrix2String(m []LatencyMapVector) string {
 	s := ""
 	for _, v := range m {
 		for _, l := range v.LatencyMapVector {
-			s += l.Latency.String()
-			s += " code: "
-			s += fmt.Sprintf("%d", l.HttpStatusCode)
-			s += "\t"
+			s += fmt.Sprintf("%s code:%d\t", l.Latency.String(), l.HttpStatusCode)
 		}
 		s += "\n"
 	}
