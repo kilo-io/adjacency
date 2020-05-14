@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	flag "github.com/spf13/pflag"
 	"io/ioutil"
@@ -14,8 +15,9 @@ import (
 )
 
 type LatencyMap struct {
-	Ip      string
-	Latency time.Duration
+	Ip             string
+	Latency        time.Duration
+	HttpStatusCode int
 }
 
 type LatencyMapVector struct {
@@ -25,17 +27,20 @@ type LatencyMapVector struct {
 
 func timeHTTPRequest(url string, ch chan LatencyMap) {
 	start := time.Now()
+	fmt.Println("start get")
 	resp, err := http.Get(url)
-	defer resp.Body.Close()
+	fmt.Println("end get with err " + err.Error())
+	//defer resp.Body.Close()
 	end := time.Now()
 	diff := end.Sub(start)
 	lat := new(LatencyMap)
 	lat.Ip = url
 	lat.Latency = diff
 	if err != nil {
-		lat.Latency = 1 << 31
+		lat.HttpStatusCode = 403 //r	lat.Latency = 1 << 31
+	} else {
+		lat.HttpStatusCode = resp.StatusCode
 	}
-
 	ch <- *lat
 }
 
@@ -45,14 +50,15 @@ func getAdjacencyVectorHTTP(urls []*url.URL) []LatencyMap {
 		go timeHTTPRequest(u.String(), ch)
 	}
 	var lats []LatencyMap
-	for range urls {
+	for _, u := range urls {
+		fmt.Println("url:" + u.String())
 		lat := <-ch
 		lats = append(lats, lat)
 	}
 	return lats
 }
 
-func srv2url(srvs []string, path string) ([]*url.URL, error) {
+func srv2url(srvs []string, path string, query string) ([]*url.URL, error) {
 	_, addrs, err := net.LookupSRV(strings.TrimLeft(srvs[0], "_"), strings.TrimLeft(srvs[1], "_"), srvs[2])
 	if err != nil {
 		return nil, err
@@ -60,9 +66,10 @@ func srv2url(srvs []string, path string) ([]*url.URL, error) {
 	urls := make([]*url.URL, 0, len(addrs))
 	for _, srv := range addrs {
 		urls = append(urls, &url.URL{
-			Scheme: "http",
-			Host:   fmt.Sprintf("%s:%d", strings.TrimRight(srv.Target, "."), srv.Port),
-			Path:   path,
+			Scheme:   "http",
+			Host:     fmt.Sprintf("%s:%d", strings.TrimRight(srv.Target, "."), srv.Port),
+			Path:     path,
+			RawQuery: query,
 		})
 	}
 	return urls, nil
@@ -70,10 +77,24 @@ func srv2url(srvs []string, path string) ([]*url.URL, error) {
 
 func vectorHandler(srv []string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		urls, err := srv2url(srv, "/ping")
+
+		srv_target := srv
+		var err error
+		if r.URL.Query()["srv"] != nil {
+			srv_target, err = parse_SRV(r)
+
+			fmt.Println("using new srv in vector handler: " + strings.Join(srv_target, "."))
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(fmt.Sprintf("%s", err)))
+				return
+			}
+		}
+		urls, err := srv2url(srv_target, "/ping", "")
 		if err != nil {
 			fmt.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Println("could not lookup srv name")
 			w.Write([]byte(err.Error()))
 			return
 		}
@@ -99,6 +120,9 @@ func getVectorFrom(url *url.URL) ([]LatencyMap, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, errors.New("srv does not resolve")
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -106,20 +130,25 @@ func getVectorFrom(url *url.URL) ([]LatencyMap, error) {
 	var lats []LatencyMap
 	err = json.Unmarshal((body), &lats)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("response from node has wrong format: Maybe is not running this service?")
 	}
 	return lats, nil
 }
 
-func getAdjacencyMatrix(srv []string) ([]LatencyMapVector, error) {
-	urls, err := srv2url(srv, "/vector")
+func getAdjacencyMatrix(srv, srv_target []string) ([]LatencyMapVector, error) {
+	query := "srv=" + strings.Join(srv_target, ".")
+	fmt.Println(query)
+	urls, err := srv2url(srv, "/vector", query)
 	if err != nil {
 		return nil, err
 	}
 	var lMatrix []LatencyMapVector
 	for _, u := range urls {
+		fmt.Println(u)
 		vec, err := getVectorFrom(u)
 		if err != nil {
+			fmt.Print("error in ln 141")
+			fmt.Println(err)
 			return nil, err
 		}
 
@@ -142,20 +171,44 @@ func AdjacencyMatrix2String(m []LatencyMapVector) string {
 	for _, v := range m {
 		for _, l := range v.LatencyMapVector {
 			s += l.Latency.String()
+			s += " code: "
+			s += fmt.Sprintf("%d", l.HttpStatusCode)
 			s += "\t"
 		}
 		s += "\n"
 	}
 	return s
 }
+func parse_SRV(r *http.Request) ([]string, error) {
+	query := r.URL.Query()
+	var srv_target []string
+	if query["srv"] != nil {
+		srv_target = strings.SplitN(query["srv"][0], ".", 3)
+		if len(srv_target) != 3 {
+
+			return nil, errors.New("the given srv record name has no valid format. It should look something like _foo._tcp.foo.com\n")
+		}
+	} else {
+		return nil, errors.New("no argument srv in query")
+	}
+	return srv_target, nil
+}
 
 func collectAllHandler(srv []string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		m, err := getAdjacencyMatrix(srv)
+		srv_target := srv
+		var err error
+		if r.URL.Query()["srv"] != nil {
+			srv_target, err = parse_SRV(r)
+			if err != nil {
+				w.Write([]byte(fmt.Sprintf("%s", err)))
+				return
+			}
+		}
+		m, err := getAdjacencyMatrix(srv, srv_target)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
-			w.Write([]byte("\nIt is likely, that one of the nodes is not running this service or some other web service is listening to the same port.\n"))
 			return
 		}
 		w.Write([]byte(AdjacencyMatrix2String(m)))
