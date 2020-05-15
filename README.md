@@ -1,5 +1,7 @@
 # adjacency_service
-Create an adjacency matrix for one srv name. So if that name resolves to 5 urls, a 5x5 matrix will be created. This service needs to be running on all nodes.
+Check latencies of nodes within a network.
+
+Either get a quadratic (n x n) matrix from all (n) nodes where this service is runnning, or specify a srv name from a diffrent service that runs on m nodes and get a n x m matrix of latencies. 
 
 ## Compile
 Compile with 
@@ -14,9 +16,14 @@ adjacency_service --listen-address ":3000" --srv "_service._tcp.exmaple.com
 ```
 Do this for all nodes. Keep in mind, that _srv_ needs to resolve to all the urls of the nodes.
 
-To get the adjancency matrix use curl e.g.
+To get the quadratic adjancency matrix use curl e.g.
 ```bash
 curl example.com:3000 
+```
+
+To get the n x m matrix for the latencies between all nodes of this service and another service's nodes
+```bash
+curl example.com:3000?srv=_service._tcp.anotherservice.com
 ```
 ### More Usage
 To only get an adjacency vector of a specific node, use
