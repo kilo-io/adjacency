@@ -25,6 +25,10 @@ To get the n x m matrix for the latencies between all nodes of this service and 
 ```bash
 curl example.com:3000?srv=_service._tcp.anotherservice.com
 ```
+If you prefet the putput as a json string add _&json=true_ to your query. E.g.:
+```bash
+curl example.com:3000?json=true
+```
 ### More Usage
 To only get an adjacency vector of a specific node, use
 ```bash
