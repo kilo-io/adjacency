@@ -2,23 +2,27 @@ dist: bionic
 
 language: bash
 
-before_install:
-  - curl -sf https://test.docker.com | sh
-  - docker --version
+services:
+  - docker
 
 env:
   global:
     - DOCKER_CLI_EXPERIMENTAL=enabled
-    - PLATFORMS=linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64
 
 script:
   - docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
-  - docker run --privileged linuxkit/binfmt:v0.7
-  - docker buildx create --use
-  - docker buildx build
-    --platform $PLATFORMS
-    --file "Dockerfile"
-    $([ "$TRAVIS_BRANCH" = "master" ] && echo --tag heptoprint/adjacency:latest && echo --tag heptoprint/adjacency:"$(git rev-parse --abbrev-ref HEAD | tr / -)-$(date +%Y-%m-%d)-$(git rev-parse --short HEAD)")
-    $([ -n "$TRAVIS_TAG" ] && echo --tag heptoprint/adjacency:$TRAVIS_TAG)
-    --push
-    .
+  - docker build -t heptoprint/adjacency:arm . --build-arg ARCH=arm
+  - docker build -t heptoprint/adjacency:arm64 . --build-arg ARCH=arm64
+  - docker build -t heptoprint/adjacency:amd64 . --build-arg ARCH=amd64
+  - docker push heptoprint/adjacency:arm
+  - docker push heptoprint/adjacency:arm64
+  - docker push heptoprint/adjacency:amd64
+  - docker manifest create --amend heptoprint/adjacency:latest heptoprint/adjacency:arm heptoprint/adjacency:arm64 heptoprint/adjacency:amd64
+  - docker manifest annotate heptoprint/adjacency:latest heptoprint/adjacency:arm --os linux --arch arm --variant v7 
+  - docker manifest annotate heptoprint/adjacency:latest heptoprint/adjacency:arm64 --os linux --arch arm64 --variant v8 
+  - docker manifest push heptoprint/adjacency:latest
+  - export tag="$(git rev-parse --abbrev-ref HEAD | tr / -)-$(date +%Y-%m-%d)-$(git rev-parse --short HEAD)"
+  - docker manifest create --amend heptoprint/adjacency:$tag heptoprint/adjacency:arm heptoprint/adjacency:arm64 heptoprint/adjacency:amd64
+  - docker manifest annotate heptoprint/adjacency:$tag heptoprint/adjacency:arm --os linux --arch arm --variant v7 
+  - docker manifest annotate heptoprint/adjacency:$tag heptoprint/adjacency:arm64 --os linux --arch arm64 --variant v8 
+  - docker manifest push heptoprint/adjacency:$tag
