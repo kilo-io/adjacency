@@ -1,0 +1,24 @@
+dist: bionic
+
+language: bash
+
+before_install:
+  - curl -sf https://test.docker.com | sh
+  - docker --version
+
+env:
+  global:
+    - DOCKER_CLI_EXPERIMENTAL=enabled
+    - PLATFORMS=linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64
+
+script:
+  - docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
+  - docker run --privileged linuxkit/binfmt:v0.7
+  - docker buildx create --use
+  - docker buildx build
+    --platform $PLATFORMS
+    --file "Dockerfile"
+    $([ "$TRAVIS_BRANCH" = "master" ] && echo --tag heptoprint/adjacency:latest && echo --tag heptoprint/adjacency:"$(git rev-parse --abbrev-ref HEAD | tr / -)-$(date +%Y-%m-%d)-$(git rev-parse --short HEAD)")
+    $([ -n "$TRAVIS_TAG" ] && echo --tag heptoprint/adjacency:$TRAVIS_TAG)
+    --push
+    .
