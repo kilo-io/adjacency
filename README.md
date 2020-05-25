@@ -3,6 +3,9 @@ Check latencies between nodes within a network.
 
 Either get a quadratic (n x n) matrix from all (n) nodes where this service is runnning, or specify a srv name from a diffrent service that runs on m nodes and get a n x m matrix of latencies. 
 
+[![Build Status](https://travis-ci.org/heptoprint/adjacency.svg?branch=master)](https://travis-ci.org/heptoprint/adjacency)
+
+
 ## Usage
 Start this service on __one__  node listening on all ips on port 3000 with
 ```bash
