@@ -5,7 +5,6 @@ Either get a quadratic (n x n) matrix from all (n) nodes where this service is r
 
 [![Build Status](https://travis-ci.org/heptoprint/adjacency.svg?branch=master)](https://travis-ci.org/heptoprint/adjacency)
 
-
 ## Usage
 Start this service on __one__  node listening on all ips on port 3000 with
 ```bash
