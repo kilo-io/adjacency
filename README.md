@@ -37,6 +37,14 @@ To format the output as JSON, add the `json=true` query parameter to the request
 curl example.com:3000?json=true
 ```
 
+## Kubernetes
+
+Apply the adjacency service to a Kubernetes cluster with
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/heptoprint/adjacency/master/example.yaml
+```
+
 ## API
 
 ### /
