@@ -5,7 +5,7 @@ Adjacency creates an adjacency matrix for an SRV record to check the latencies b
 It can generate a square (n x n) matrix from all (n) nodes where the service is runnning.
 Alternatively, if an SRV record for a different service that runs on m nodes is specified at query-time, it will produce a n x m matrix of latencies from nodes to service endpoints. 
 
-[![Build Status](https://travis-ci.org/heptoprint/adjacency.svg?branch=master)](https://travis-ci.org/heptoprint/adjacency)
+![Build Status](https://github.com/heptoprint/adjacency/workflows/ci/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/heptoprint/adjacency)](https://goreportcard.com/report/github.com/heptoprint/adjacency)
 
 ## Getting Started
