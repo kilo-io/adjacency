@@ -66,7 +66,7 @@ Use the `format` query parameter to format the output
  - format=json JSON
  - format=simple only times in a table
  - format=fancy table with borders, error code and IP addresses or hostnames (hostname is fallback)
- - format=standart error codes with times 
+ - format=standard error codes with times 
 
 ### /vector
 

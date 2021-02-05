@@ -23,9 +23,11 @@ import (
 
 // possible values for the output that will be printed to the terminal
 const (
-	standart format = iota
+	standard format = iota
 	fancy
 	simple
+
+	naIP = "na"
 )
 
 var (
@@ -44,28 +46,17 @@ var (
 )
 
 var (
-	fullScanCounter = prometheus.NewCounter(
+	requestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "fullscan_counter",
-			Help: "Number of requested full scans",
+			Name: "http_requests_total",
+			Help: "The number of received http request",
 		},
-	)
-	vectorScanCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "vectorscan_counter",
-			Help: "Number of requested vector scans",
-		},
-	)
-	pingCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "ping_counter",
-			Help: "Number of requested fake ping probes",
-		},
+		[]string{"handler", "method"},
 	)
 	errorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "total_error_counter",
-			Help: "Number of total occurred errors",
+			Name: "errors_total",
+			Help: "The total number of errors",
 		},
 	)
 )
@@ -141,7 +132,7 @@ func (m matrix) Pad() matrix {
 }
 
 func ipOrHost(ip, host string) string {
-	if ip != "na" {
+	if ip != naIP {
 		return ip
 	}
 	return host
@@ -222,7 +213,7 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 	// Shadow the err, because not being able to get an IP address should not
 	// overwrite the previous error and getting no error does not indicate, that
 	// the fake ping request was successful
-	ip := "na"
+	ip := naIP
 	if i, err := net.LookupIP(u.Hostname()); err == nil && len(i) > 0 {
 		ip = i[0].String()
 	}
@@ -267,7 +258,6 @@ func resolveSRV(srv, path, query string) ([]*url.URL, error) {
 
 func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vectorScanCounter.Inc()
 		srv := defaultSRV
 		var err error
 		if r.URL.Query()["srv"] != nil {
@@ -299,7 +289,6 @@ func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
 }
 
 func pingHandler(w http.ResponseWriter, r *http.Request) {
-	pingCounter.Inc()
 	w.Write([]byte("pong"))
 }
 
@@ -313,7 +302,7 @@ func srvFromRequest(r *http.Request) (string, error) {
 
 func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 	// Try to get IP address from target
-	ip := "na"
+	ip := naIP
 	if i, err := net.LookupIP(url.Hostname()); err == nil && len(i) > 0 {
 		ip = i[0].String()
 	}
@@ -347,9 +336,8 @@ func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 
 func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fullScanCounter.Inc()
 		target := srv
-		//srv target will be over written, if it is specified in the url query.
+		// The srv target will be over written, if it is specified in the url query.
 		if r.URL.Query()["srv"] != nil {
 			var err error
 			target, err = srvFromRequest(r)
@@ -401,14 +389,21 @@ func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 				w.Write([]byte(j))
 				return
 			default:
-				f = standart
+				f = standard
 			}
 
 			s = m.String(f)
 		} else {
-			s = m.String(standart)
+			s = m.String(standard)
 		}
 		w.Write([]byte(s))
+	}
+}
+
+func metricsMiddleWare(path string, next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		requestCounter.With(prometheus.Labels{"method": r.Method, "handler": path}).Inc()
+		next(w, r)
 	}
 }
 
@@ -420,18 +415,17 @@ func main() {
 	}
 	r := prometheus.NewRegistry()
 	r.MustRegister(
-		pingCounter,
-		vectorScanCounter,
-		fullScanCounter,
+		errorCounter,
+		requestCounter,
 		prometheus.NewGoCollector(),
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 	)
 	m := http.NewServeMux()
 	mm := http.NewServeMux()
 	mm.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
-	m.HandleFunc("/vector", vectorHandler(*srv))
-	m.HandleFunc("/ping", pingHandler)
-	m.HandleFunc("/", collectAllHandler(*srv))
+	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv)))
+	m.HandleFunc("/ping", metricsMiddleWare("/ping", pingHandler))
+	m.HandleFunc("/", metricsMiddleWare("/", collectAllHandler(*srv)))
 	go http.ListenAndServe(*metricsAddr, mm)
 	log.Printf("listening on %s\n", *listenAddr)
 	log.Fatal(http.ListenAndServe(*listenAddr, m))
