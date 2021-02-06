@@ -31,10 +31,10 @@ To get the n x m matrix for the latencies between all nodes of this service and 
 curl example.com:3000?srv=_anotherservice._tcp.example.com
 ```
 
-To format the output as JSON, add the `json=true` query parameter to the request, e.g.:
+To format the output as JSON, add the `format=json` query parameter to the request, e.g.:
 
 ```shell
-curl example.com:3000?json=true
+curl example.com:3000?format=json
 ```
 
 ## Kubernetes
@@ -60,9 +60,13 @@ curl example.com:3000
 Use the `srv` query parameter to set the target SRV record to another service.
 This will result in an n x m matrix.
 
-#### json=true
+#### format
 
-Use the `json` query parameter to format the output as JSON.
+Use the `format` query parameter to format the output
+ - format=json JSON
+ - format=simple only times in a table
+ - format=fancy table with borders, error code and IP addresses or hostnames (hostname is fallback)
+ - format=standard error codes with times 
 
 ### /vector
 

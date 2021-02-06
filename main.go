@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,47 +16,211 @@ import (
 	"sync"
 	"time"
 
-	flag "github.com/spf13/pflag"
+	"github.com/olekukonko/tablewriter"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// possible values for the output that will be printed to the terminal
+const (
+	standard format = iota
+	fancy
+	simple
+
+	naIP = "na"
+)
+
+var (
+	srv         *string = flag.String("srv", "_service._proto.exmaple.com", "the srv record name to be used to look up IP addresses and port")
+	listenAddr  *string = flag.String("listen-address", ":3000", "The service will be listening to that address with port\ne.g. 172.0.0.1:3000")
+	metricsAddr *string = flag.String("metrics-address", ":9090", "The metrics server will be listening to that address with port\ne.g. 172.0.0.1:9090")
+)
+
+var (
+	httpVectorClient = http.Client{
+		Timeout: 10 * time.Second,
+	}
+	httpPingClient = http.Client{
+		Timeout: 5 * time.Second,
+	}
+)
+
+var (
+	requestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "The number of received http request",
+		},
+		[]string{"handler", "method"},
+	)
+	errorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "errors_total",
+			Help: "The total number of errors",
+		},
+	)
 )
 
 type Latency struct {
 	Destination string        `json:"destination"`
+	IP          string        `json:"ip,omitempty"`
+	Host        string        `json:"host,omitempty"`
 	Duration    time.Duration `json:"duration"`
 	Ok          bool          `json:"ok"`
 }
 
 type Vector struct {
 	Source    string    `json:"source"`
+	IP        string    `json:"ip,omitempty"`
+	Host      string    `json:"host,omitempty"`
 	Latencies []Latency `json:"latencies,omitempty"`
 	Ok        bool      `json:"ok"`
 }
 
 type matrix []Vector
 
-func (m matrix) String() string {
-	s := ""
-	for _, v := range m {
-		for _, l := range v.Latencies {
-			s += fmt.Sprintf("%s code:%t\t", l.Duration.String(), l.Ok)
-		}
-		s += "\n"
+type format int
+
+// In case some nodes get different
+// dns resolution, fill matrix with dummy entries, so entries
+// within a row or column still have the same source/destination.
+func (m matrix) Pad() matrix {
+	for _, lats := range m {
+		sort.Slice(lats.Latencies, func(i, j int) bool {
+			return lats.Latencies[i].Destination < lats.Latencies[j].Destination
+		})
 	}
-	return s
+	sort.Slice(m, func(i, j int) bool {
+		return m[i].Source < m[j].Source
+	})
+	var urlsH, urlsV []string
+	urlsVM := make(map[string]struct{})
+	// Find all different urls in the rows.
+	for _, v := range m {
+		urlsV = append(urlsV, v.Source)
+		for _, l := range v.Latencies {
+			urlsVM[l.Destination] = struct{}{}
+		}
+	}
+	// Create a slice to be able to order the urls.
+	for u := range urlsVM {
+		urlsH = append(urlsH, u)
+	}
+	sort.Slice(urlsH, func(i, j int) bool {
+		return urlsH[i] < urlsH[j]
+	})
+
+	nm := make(matrix, len(urlsV))
+	for k, v := range m {
+		nV := v
+		nV.Latencies = make([]Latency, len(urlsH))
+		// Find the missing url in the row
+		// and insert dummies.
+		offset := 0
+		for i, u := range urlsH {
+			if i < len(v.Latencies)+offset && v.Latencies[i-offset].Destination == u {
+				nV.Latencies[i] = v.Latencies[i-offset]
+				continue
+			}
+			offset++
+			nV.Latencies[i].Destination = "dummy"
+			nV.Latencies[i].Ok = true
+		}
+		nm[k] = nV
+	}
+	return nm
 }
 
-func timeHTTPRequest(ctx context.Context, url string) *Latency {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func ipOrHost(ip, host string) string {
+	if ip != naIP {
+		return ip
+	}
+	return host
+}
+
+func (m matrix) String(f format) string {
+	tableString := &strings.Builder{}
+	table := tablewriter.NewWriter(tableString)
+	var data [][]string
+	switch f {
+	case fancy:
+		line := []string{"Source\\Dest"}
+		for _, v := range m {
+			line = append(line, ipOrHost(v.IP, v.Host))
+		}
+		table.SetHeader(line)
+		line = []string{}
+		for _, v := range m {
+			line = []string{ipOrHost(v.IP, v.Host)}
+			for _, l := range v.Latencies {
+				line = append(line, fmt.Sprintf("%s code:%t", l.Duration.String(), l.Ok))
+			}
+			data = append(data, line)
+		}
+		table.SetAutoFormatHeaders(true)
+		table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	case simple:
+		for _, v := range m {
+			line := []string{}
+			for _, l := range v.Latencies {
+				line = append(line, l.Duration.String())
+			}
+			data = append(data, line)
+		}
+		table.SetCenterSeparator("")
+		table.SetColumnSeparator("")
+		table.SetRowSeparator("")
+		table.SetHeaderLine(false)
+		table.SetBorder(false)
+	default:
+		for _, v := range m {
+			line := []string{}
+			for _, l := range v.Latencies {
+				line = append(line, fmt.Sprintf("%s code:%t", l.Duration.String(), l.Ok))
+			}
+			data = append(data, line)
+		}
+		table.SetCenterSeparator("")
+		table.SetColumnSeparator("")
+		table.SetRowSeparator("")
+		table.SetHeaderLine(false)
+		table.SetBorder(false)
+	}
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetTablePadding(" ")
+	table.AppendBulk(data)
+	table.Render()
+	return tableString.String()
+}
+
+func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return &Latency{Destination: url}
+		log.Printf("failed to create Request: %v\n", err)
+		errorCounter.Inc()
+		return &Latency{Host: u.Hostname(), Destination: u.String()}
 	}
 	start := time.Now()
-	if _, err := http.DefaultClient.Do(req); err != nil {
-		fmt.Printf("failed to make ping request: %v\n", err)
+	var end time.Time
+	if _, err = httpPingClient.Do(req); err != nil {
+		log.Printf("failed to make ping request: %v\n", err)
+		// set the time to almost infinity
+		end = time.Unix(1<<63-1, 0)
+	} else {
+		end = time.Now()
 	}
-	end := time.Now()
+	// Try to get IP address of target
+	// Shadow the err, because not being able to get an IP address should not
+	// overwrite the previous error and getting no error does not indicate, that
+	// the fake ping request was successful
+	ip := naIP
+	if i, err := net.LookupIP(u.Hostname()); err == nil && len(i) > 0 {
+		ip = i[0].String()
+	}
 	return &Latency{
-		Destination: url,
+		Destination: u.String(),
 		Duration:    end.Sub(start),
+		IP:          ip,
 		Ok:          err == nil,
 	}
 }
@@ -66,7 +232,7 @@ func getLatencies(ctx context.Context, urls []*url.URL) []*Latency {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			lats[i] = timeHTTPRequest(ctx, urls[i].String())
+			lats[i] = timeHTTPRequest(ctx, urls[i])
 		}(i)
 	}
 	wg.Wait()
@@ -86,7 +252,6 @@ func resolveSRV(srv, path, query string) ([]*url.URL, error) {
 			Path:     path,
 			RawQuery: query,
 		})
-		fmt.Println(urls[len(urls)-1].String())
 	}
 	return urls, nil
 }
@@ -98,20 +263,24 @@ func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
 		if r.URL.Query()["srv"] != nil {
 			srv, err = srvFromRequest(r)
 			if err != nil {
+				log.Printf("failed to parse SRV record from request: %v\n", err)
+				errorCounter.Inc()
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
 		urls, err := resolveSRV(srv, "/ping", "")
 		if err != nil {
-			fmt.Println(err)
+			log.Printf("failed to resolve SRV record: %v\n", err)
+			errorCounter.Inc()
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		lats := getLatencies(r.Context(), urls)
 		data, err := json.Marshal(lats)
 		if err != nil {
-			fmt.Println(err)
+			log.Printf("failed to marshal data: %v\n", err)
+			errorCounter.Inc()
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -132,14 +301,21 @@ func srvFromRequest(r *http.Request) (string, error) {
 }
 
 func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
+	// Try to get IP address from target
+	ip := naIP
+	if i, err := net.LookupIP(url.Hostname()); err == nil && len(i) > 0 {
+		ip = i[0].String()
+	}
 	v := &Vector{
 		Source: url.String(),
+		Host:   url.Hostname(),
+		IP:     ip,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
 	if err != nil {
 		return v, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpVectorClient.Do(req)
 	if err != nil {
 		return v, fmt.Errorf("failed to make GET request: %w", err)
 	}
@@ -161,17 +337,19 @@ func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := srv
-		//srv target will be over written, if it is specified in the url query
+		// The srv target will be over written, if it is specified in the url query.
 		if r.URL.Query()["srv"] != nil {
 			var err error
 			target, err = srvFromRequest(r)
 			if err != nil {
+				errorCounter.Inc()
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
 		urls, err := resolveSRV(srv, "/vector", "srv="+target)
 		if err != nil {
+			errorCounter.Inc()
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -184,46 +362,71 @@ func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 				defer wg.Done()
 				vec, err := getVectorFrom(r.Context(), urls[i])
 				if err != nil {
-					fmt.Printf("failed to get Vector from %s: %v\n", vec.Source, err)
+					errorCounter.Inc()
+					log.Printf("failed to get Vector from %s: %v\n", vec.Source, err)
 				}
 				m[i] = *vec
 			}(i)
 		}
 		wg.Wait()
-		for _, lats := range m {
-			sort.Slice(lats.Latencies, func(i, j int) bool {
-				return lats.Latencies[i].Destination < lats.Latencies[j].Destination
-			})
-		}
-		sort.Slice(m, func(i, j int) bool {
-			return m[i].Source < m[j].Source
-		})
-		if r.URL.Query()["json"] != nil && r.URL.Query()["json"][0] == "true" {
-			j, err := json.Marshal(m)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Pad matrix with dummies.
+		m = m.Pad()
+		s := ""
+		if q := r.URL.Query()["format"]; q != nil {
+			var f format
+			switch q[0] {
+			case "fancy":
+				f = fancy
+			case "simple":
+				f = simple
+			case "json":
+				j, err := json.Marshal(m)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					errorCounter.Inc()
+					return
+				}
+				w.Write([]byte(j))
 				return
+			default:
+				f = standard
 			}
-			w.Write([]byte(j))
-			return
+
+			s = m.String(f)
+		} else {
+			s = m.String(standard)
 		}
-		w.Write([]byte(m.String()))
+		w.Write([]byte(s))
 	}
 }
 
-var srv *string = flag.String("srv", "_service._proto.exmaple.com", "the srv record name to be used to look up IP addresses and port")
-var listenAddr *string = flag.String("listen-address", ":3000", "The service will be listening to that address with port\ne.g. 172.0.0.1:3000")
+func metricsMiddleWare(path string, next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		requestCounter.With(prometheus.Labels{"method": r.Method, "handler": path}).Inc()
+		next(w, r)
+	}
+}
 
 func main() {
 	flag.Parse()
 	if len(strings.SplitN(*srv, ".", 3)) != 3 {
-		fmt.Printf("%q is not a valid srv record name\n", *srv)
+		log.Printf("%q is not a valid srv record name\n", *srv)
 		return
 	}
+	r := prometheus.NewRegistry()
+	r.MustRegister(
+		errorCounter,
+		requestCounter,
+		prometheus.NewGoCollector(),
+		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+	)
 	m := http.NewServeMux()
-	m.HandleFunc("/vector", vectorHandler(*srv))
-	m.HandleFunc("/ping", pingHandler)
-	m.HandleFunc("/", collectAllHandler(*srv))
-	fmt.Printf("listening on %s\n", *listenAddr)
-	http.ListenAndServe(*listenAddr, m)
+	mm := http.NewServeMux()
+	mm.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
+	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv)))
+	m.HandleFunc("/ping", metricsMiddleWare("/ping", pingHandler))
+	m.HandleFunc("/", metricsMiddleWare("/", collectAllHandler(*srv)))
+	go http.ListenAndServe(*metricsAddr, mm)
+	log.Printf("listening on %s\n", *listenAddr)
+	log.Fatal(http.ListenAndServe(*listenAddr, m))
 }
