@@ -139,14 +139,17 @@ func ipOrHost(ip, host string) string {
 }
 
 func (m matrix) String(f format) string {
+	if len(m) == 0 {
+		return "\n"
+	}
 	tableString := &strings.Builder{}
 	table := tablewriter.NewWriter(tableString)
 	var data [][]string
 	switch f {
 	case fancy:
 		line := []string{"Source\\Dest"}
-		for _, v := range m {
-			line = append(line, ipOrHost(v.IP, v.Host))
+		for _, l := range m[0].Latencies {
+			line = append(line, ipOrHost(l.IP, l.Host))
 		}
 		table.SetHeader(line)
 		line = []string{}
@@ -205,7 +208,7 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 	if _, err = httpPingClient.Do(req); err != nil {
 		log.Printf("failed to make ping request: %v\n", err)
 		// set the time to almost infinity
-		end = time.Unix(1<<63-1, 0)
+		end = time.Unix(1<<31-1, 0)
 	} else {
 		end = time.Now()
 	}
