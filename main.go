@@ -140,14 +140,17 @@ func ipOrHost(ip, host string) string {
 }
 
 func (m matrix) String(f format) string {
+	if len(m) == 0 {
+		return "\n"
+	}
 	tableString := &strings.Builder{}
 	table := tablewriter.NewWriter(tableString)
 	var data [][]string
 	switch f {
 	case fancy:
 		line := []string{"Source\\Dest"}
-		for _, v := range m {
-			line = append(line, ipOrHost(v.IP, v.Host))
+		for _, l := range m[0].Latencies {
+			line = append(line, ipOrHost(l.IP, l.Host))
 		}
 		table.SetHeader(line)
 		line = []string{}
