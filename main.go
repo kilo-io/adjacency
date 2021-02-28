@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -204,13 +205,18 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 		return &Latency{Host: u.Hostname(), Destination: u.String()}
 	}
 	start := time.Now()
-	var end time.Time
-	if _, err = httpPingClient.Do(req); err != nil {
+	var dur time.Duration
+	var res *http.Response
+	if res, err = httpPingClient.Do(req); err != nil {
+		defer res.Body.Close()
 		log.Printf("failed to make ping request: %v\n", err)
 		// set the time to almost infinity
-		end = time.Unix(1<<31-1, 0)
+		dur = time.Duration(1<<63 - 1)
+		if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
+			log.Printf("failed to discard body: %v\n", err)
+		}
 	} else {
-		end = time.Now()
+		dur = time.Now().Sub(start)
 	}
 	// Try to get IP address of target
 	// Shadow the err, because not being able to get an IP address should not
@@ -222,7 +228,7 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 	}
 	return &Latency{
 		Destination: u.String(),
-		Duration:    end.Sub(start),
+		Duration:    dur,
 		IP:          ip,
 		Ok:          err == nil,
 	}
@@ -324,6 +330,9 @@ func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusServiceUnavailable {
+		if _, err := io.Copy(ioutil.Discard, resp.Body); err != nil {
+			log.Printf("failed to discard body: %v\n", err)
+		}
 		return v, errors.New("failed to resolve SRV record")
 	}
 	body, err := ioutil.ReadAll(resp.Body)
