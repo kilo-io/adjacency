@@ -22,6 +22,18 @@ spec:
         ports:
         - name: http
           containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: http
+          failureThreshold: 2
+          periodSeconds: 5
+        startupProbe:
+          httpGet:
+            path: /ping
+            port: http
+          failureThreshold: 2
+          periodSeconds: 5
 ---
 kind: Service
 apiVersion: v1
