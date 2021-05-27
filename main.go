@@ -208,15 +208,17 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 	var dur time.Duration
 	var res *http.Response
 	if res, err = httpPingClient.Do(req); err != nil {
-		defer res.Body.Close()
 		log.Printf("failed to make ping request: %v\n", err)
 		// set the time to almost infinity
 		dur = time.Duration(1<<63 - 1)
+	} else {
+		dur = time.Now().Sub(start)
 		if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
 			log.Printf("failed to discard body: %v\n", err)
 		}
-	} else {
-		dur = time.Now().Sub(start)
+		if err := res.Body.Close(); err != nil {
+			log.Printf("failed to close body: %v\n", err)
+		}
 	}
 	// Try to get IP address of target
 	// Shadow the err, because not being able to get an IP address should not
