@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: adjacency
-        image: heptoprint/adjacency
+        image: kiloio/adjacency
         args: 
         - --listen-address=:8080
         - --srv=_http._tcp.adjacency

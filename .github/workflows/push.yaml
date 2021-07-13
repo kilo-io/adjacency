@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: ["main","master"]
+    branches: ["main"]
 
 jobs:
   main:
@@ -32,7 +32,7 @@ jobs:
         with:
           push: true
           platforms: linux/arm64, linux/arm, linux/amd64
-          tags: heptoprint/adjacency:latest, heptoprint/adjacency:${{ steps.sha.outputs.sha }}
+          tags: kiloio/adjacency:latest, kiloio/adjacency:${{ steps.sha.outputs.sha }}
       -
         name: Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
