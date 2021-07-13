@@ -1,4 +1,4 @@
-module github.com/heptoprint/adjacency_service
+module github.com/kilo-io/adjacency_service
 
 go 1.14
 

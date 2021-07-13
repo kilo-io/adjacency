@@ -5,15 +5,15 @@ Adjacency creates an adjacency matrix for an SRV record to check the latencies b
 It can generate a square (n x n) matrix from all (n) nodes where the service is runnning.
 Alternatively, if an SRV record for a different service that runs on m nodes is specified at query-time, it will produce a n x m matrix of latencies from nodes to service endpoints. 
 
-![Build Status](https://github.com/heptoprint/adjacency/workflows/ci/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/heptoprint/adjacency)](https://goreportcard.com/report/github.com/heptoprint/adjacency)
+![Build Status](https://github.com/kilo-io/adjacency/workflows/ci/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kilo-io/adjacency)](https://goreportcard.com/report/github.com/kilo-io/adjacency)
 
 ## Getting Started
 
 Run the adjacency service and specify an SRV record that resolves to all the endpoints where the service is running:
 
 ```shell
-docker run --rm -p 3000:3000 heptoprint/adjacency --srv _service._tcp.exmaple.com
+docker run --rm -p 3000:3000 kiloio/adjacency --srv _service._tcp.exmaple.com
 ```
 
 Do this for all nodes.
@@ -42,7 +42,7 @@ curl example.com:3000?format=json
 Apply the adjacency service to a Kubernetes cluster with
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/heptoprint/adjacency/master/example.yaml
+kubectl apply -f https://raw.githubusercontent.com/kilo-io/adjacency/main/example.yaml
 ```
 
 ## API
