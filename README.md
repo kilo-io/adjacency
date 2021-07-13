@@ -2,7 +2,7 @@
 
 Adjacency creates an adjacency matrix for an SRV record to check the latencies between nodes in a network.
 
-It can generate a square (n x n) matrix from all (n) nodes where the service is runnning.
+It can generate a square (n x n) matrix from all (n) nodes where the service is running.
 Alternatively, if an SRV record for a different service that runs on m nodes is specified at query-time, it will produce a n x m matrix of latencies from nodes to service endpoints. 
 
 ![Build Status](https://github.com/kilo-io/adjacency/workflows/ci/badge.svg)
@@ -13,13 +13,13 @@ Alternatively, if an SRV record for a different service that runs on m nodes is 
 Run the adjacency service and specify an SRV record that resolves to all the endpoints where the service is running:
 
 ```shell
-docker run --rm -p 3000:3000 kiloio/adjacency --srv _service._tcp.exmaple.com
+docker run --rm -p 3000:3000 kiloio/adjacency --srv _service._tcp.example.com
 ```
 
 Do this for all nodes.
 Keep in mind, that the value of the `--srv` flag _must_ to resolve to the endpoints of all the nodes.
 
-Now, to get the square adjancency matrix, make a GET request to the API, e.g. using cURL:
+Now, to get the square adjacency matrix, make a GET request to the API, e.g. using cURL:
 
 ```shell
 curl example.com:3000 
@@ -85,6 +85,6 @@ Use the `srv` query parameter to set the target SRV record to another service.
 Check if service is running:
 
 ```shell
-curl exmaple.com:3000/ping
+curl example.com:3000/ping
 # The service should respond with pong.
 ```
