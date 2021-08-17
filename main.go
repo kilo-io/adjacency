@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/olekukonko/tablewriter"
@@ -62,12 +64,19 @@ var (
 	)
 )
 
+var probers []prober
+
+func init() {
+	probers = []prober{httpPingProber{}, httpProber{}, newTCPProber(), noProber{}}
+}
+
 type Latency struct {
 	Destination string        `json:"destination"`
 	IP          string        `json:"ip,omitempty"`
 	Host        string        `json:"host,omitempty"`
 	Duration    time.Duration `json:"duration"`
 	Ok          bool          `json:"ok"`
+	Prober      string        `json:"prober"`
 }
 
 type Vector struct {
@@ -81,6 +90,112 @@ type Vector struct {
 type matrix []Vector
 
 type format int
+
+type prober interface {
+	probe(context.Context, url.URL) (time.Duration, error)
+	String() string
+}
+
+type noProber struct{}
+
+func (p noProber) probe(ctx context.Context, u url.URL) (time.Duration, error) {
+	dur := time.Duration(1<<63 - 1)
+	return dur, errors.New("this is no probe")
+}
+
+func (p noProber) String() string {
+	return "no-prober"
+}
+
+type httpPingProber struct{}
+
+func (p httpPingProber) probe(ctx context.Context, u url.URL) (time.Duration, error) {
+	u.Path = "ping"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	start := time.Now()
+	var dur time.Duration
+	var res *http.Response
+	if res, err = httpPingClient.Do(req); err != nil {
+		return 0, fmt.Errorf("failed to make request to %s: %w", u.String(), err)
+	}
+	if res.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("expected status Code 200, got %d", res.StatusCode)
+	}
+	dur = time.Now().Sub(start)
+	if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
+		log.Printf("failed to discard body: %v\n", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		log.Printf("failed to close body: %v\n", err)
+	}
+	return dur, nil
+}
+
+func (p httpPingProber) String() string {
+	return "http-ping-prober"
+}
+
+type httpProber struct{}
+
+func (p httpProber) probe(ctx context.Context, u url.URL) (time.Duration, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	start := time.Now()
+	var dur time.Duration
+	var res *http.Response
+	if res, err = httpPingClient.Do(req); err != nil {
+		return 0, fmt.Errorf("failed to make request to %s: %w", u.String(), err)
+	}
+	dur = time.Now().Sub(start)
+	if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
+		log.Printf("failed to discard body: %v\n", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		log.Printf("failed to close body: %v\n", err)
+	}
+	return dur, nil
+}
+
+func (p httpProber) String() string {
+	return "http-prober"
+}
+
+type tcpProber struct {
+	dialer net.Dialer
+}
+
+func newTCPProber() tcpProber {
+	return tcpProber{
+		dialer: net.Dialer{},
+	}
+}
+
+// probe tries to establish a tcp connection to the given url
+// If probe receives an ECONNRESET, it will return no error and use the time between the initial
+// attmept to establish the connection and the time of the reveival of the TCP RST signal.
+func (p tcpProber) probe(ctx context.Context, u url.URL) (dur time.Duration, err error) {
+	start := time.Now()
+	var conn net.Conn
+	sysErr := &os.SyscallError{}
+	if conn, err = p.dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%s", u.Hostname(), u.Port())); err == nil {
+		defer conn.Close()
+	} else if errors.As(err, &sysErr) && sysErr.Err == syscall.ECONNRESET {
+		log.Printf("Received ECONNRESET from %s, continue", u.String())
+	} else {
+		return 0, fmt.Errorf("failed to establish a tcp connection with %s: %w", fmt.Sprintf("%s:%s", u.Hostname(), u.Port()), err)
+	}
+	dur = time.Now().Sub(start)
+	return dur, nil
+}
+
+func (p tcpProber) String() string {
+	return "tcp-prober"
+}
 
 // In case some nodes get different
 // dns resolution, fill matrix with dummy entries, so entries
@@ -198,27 +313,21 @@ func (m matrix) String(f format) string {
 }
 
 func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		log.Printf("failed to create Request: %v\n", err)
-		errorCounter.Inc()
-		return &Latency{Host: u.Hostname(), Destination: u.String()}
-	}
-	start := time.Now()
 	var dur time.Duration
-	var res *http.Response
-	if res, err = httpPingClient.Do(req); err != nil {
-		log.Printf("failed to make ping request: %v\n", err)
-		// set the time to almost infinity
-		dur = time.Duration(1<<63 - 1)
-	} else {
-		dur = time.Now().Sub(start)
-		if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
-			log.Printf("failed to discard body: %v\n", err)
+	var err error
+	var p prober
+	p = noProber{}
+	for _, p = range probers {
+		if dur, err = p.probe(ctx, *u); err == nil {
+			break
+		} else {
+			log.Printf("prober %s failed: %v", p.String(), err)
 		}
-		if err := res.Body.Close(); err != nil {
-			log.Printf("failed to close body: %v\n", err)
-		}
+	}
+	if err != nil {
+		log.Printf("failed to successfully determine any latency: %v\n", err)
+		errorCounter.Inc()
+		return &Latency{Duration: dur, Host: u.Hostname(), Destination: u.String(), Prober: p.String()}
 	}
 	// Try to get IP address of target
 	// Shadow the err, because not being able to get an IP address should not
@@ -233,6 +342,7 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 		Duration:    dur,
 		IP:          ip,
 		Ok:          err == nil,
+		Prober:      p.String(),
 	}
 }
 
@@ -280,7 +390,7 @@ func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
 				return
 			}
 		}
-		urls, err := resolveSRV(srv, "/ping", "")
+		urls, err := resolveSRV(srv, "", "")
 		if err != nil {
 			log.Printf("failed to resolve SRV record: %v\n", err)
 			errorCounter.Inc()
