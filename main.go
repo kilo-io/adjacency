@@ -214,7 +214,6 @@ func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL) *
 	if err != nil {
 		log.Printf("failed to successfully determine any latency: %v\n", err)
 		errorCounter.Inc()
-		return &Latency{Duration: dur, Host: u.Hostname(), Destination: u.String(), Prober: p.String()}
 	}
 	// Try to get IP address of target
 	// Shadow the err, because not being able to get an IP address should not
@@ -227,9 +226,10 @@ func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL) *
 	return &Latency{
 		Destination: u.String(),
 		Duration:    dur,
+		Host:        u.Hostname(),
+		Prober:      p.String(),
 		IP:          ip,
 		Ok:          err == nil,
-		Prober:      p.String(),
 	}
 }
 

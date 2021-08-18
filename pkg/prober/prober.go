@@ -32,11 +32,11 @@ type NoProber struct{}
 
 func (p *NoProber) Probe(ctx context.Context, u url.URL) (time.Duration, error) {
 	dur := time.Duration(1<<63 - 1)
-	return dur, errors.New("this is no Probe")
+	return dur, errors.New("this is no probe")
 }
 
 func (p *NoProber) String() string {
-	return "no-Prober"
+	return "no-prober"
 }
 
 // HTTPPingProber implements the Prober interface.
