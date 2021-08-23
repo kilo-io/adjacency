@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kilo-io/adjacency_service/pkg/prober"
+
 	"github.com/olekukonko/tablewriter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -68,6 +70,7 @@ type Latency struct {
 	Host        string        `json:"host,omitempty"`
 	Duration    time.Duration `json:"duration"`
 	Ok          bool          `json:"ok"`
+	Prober      string        `json:"prober"`
 }
 
 type Vector struct {
@@ -197,28 +200,20 @@ func (m matrix) String(f format) string {
 	return tableString.String()
 }
 
-func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		log.Printf("failed to create Request: %v\n", err)
-		errorCounter.Inc()
-		return &Latency{Host: u.Hostname(), Destination: u.String()}
-	}
-	start := time.Now()
+func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL) *Latency {
 	var dur time.Duration
-	var res *http.Response
-	if res, err = httpPingClient.Do(req); err != nil {
-		log.Printf("failed to make ping request: %v\n", err)
-		// set the time to almost infinity
-		dur = time.Duration(1<<63 - 1)
-	} else {
-		dur = time.Now().Sub(start)
-		if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
-			log.Printf("failed to discard body: %v\n", err)
+	var err error
+	var p prober.Prober
+	for _, p = range probers {
+		if dur, err = p.Probe(ctx, *u); err == nil {
+			break
+		} else {
+			log.Printf("prober %s failed: %v", p.String(), err)
 		}
-		if err := res.Body.Close(); err != nil {
-			log.Printf("failed to close body: %v\n", err)
-		}
+	}
+	if err != nil {
+		log.Printf("failed to successfully determine any latency: %v\n", err)
+		errorCounter.Inc()
 	}
 	// Try to get IP address of target
 	// Shadow the err, because not being able to get an IP address should not
@@ -231,19 +226,21 @@ func timeHTTPRequest(ctx context.Context, u *url.URL) *Latency {
 	return &Latency{
 		Destination: u.String(),
 		Duration:    dur,
+		Host:        u.Hostname(),
+		Prober:      p.String(),
 		IP:          ip,
 		Ok:          err == nil,
 	}
 }
 
-func getLatencies(ctx context.Context, urls []*url.URL) []*Latency {
+func getLatencies(ctx context.Context, probers []prober.Prober, urls []*url.URL) []*Latency {
 	var wg sync.WaitGroup
 	lats := make([]*Latency, len(urls))
 	for i := range urls {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			lats[i] = timeHTTPRequest(ctx, urls[i])
+			lats[i] = timeHTTPRequest(ctx, probers, urls[i])
 		}(i)
 	}
 	wg.Wait()
@@ -267,7 +264,7 @@ func resolveSRV(srv, path, query string) ([]*url.URL, error) {
 	return urls, nil
 }
 
-func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
+func vectorHandler(defaultSRV string, probers []prober.Prober) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		srv := defaultSRV
 		var err error
@@ -280,14 +277,14 @@ func vectorHandler(defaultSRV string) func(http.ResponseWriter, *http.Request) {
 				return
 			}
 		}
-		urls, err := resolveSRV(srv, "/ping", "")
+		urls, err := resolveSRV(srv, "", "")
 		if err != nil {
 			log.Printf("failed to resolve SRV record: %v\n", err)
 			errorCounter.Inc()
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		lats := getLatencies(r.Context(), urls)
+		lats := getLatencies(r.Context(), probers, urls)
 		data, err := json.Marshal(lats)
 		if err != nil {
 			log.Printf("failed to marshal data: %v\n", err)
@@ -427,6 +424,7 @@ func main() {
 		log.Printf("%q is not a valid srv record name\n", *srv)
 		return
 	}
+	probers := []prober.Prober{prober.NewHTTPPingProber(&httpPingClient), prober.NewHTTPProber(&httpPingClient), prober.NewTCPProber(), &prober.NoProber{}}
 	r := prometheus.NewRegistry()
 	r.MustRegister(
 		errorCounter,
@@ -437,7 +435,7 @@ func main() {
 	m := http.NewServeMux()
 	mm := http.NewServeMux()
 	mm.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
-	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv)))
+	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv, probers)))
 	m.HandleFunc("/ping", metricsMiddleWare("/ping", pingHandler))
 	m.HandleFunc("/", metricsMiddleWare("/", collectAllHandler(*srv)))
 	go http.ListenAndServe(*metricsAddr, mm)
