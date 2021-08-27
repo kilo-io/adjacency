@@ -1,9 +1,10 @@
 FROM golang:alpine as build
-COPY . /adjacency
+RUN apk --no-cach add gcc libc-dev
 WORKDIR /adjacency
-RUN CGO_ENABLED=0 GOOS=linux go build --mod=vendor -o ./adjacency
+COPY . /adjacency
+RUN GOOS=linux go build --mod=vendor -o ./adjacency
 
-FROM scratch
+FROM alpine
 WORKDIR /
 COPY --from=build /adjacency/adjacency .
 ENTRYPOINT ["/adjacency"]
