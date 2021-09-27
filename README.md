@@ -67,6 +67,9 @@ Use the `format` query parameter to format the output
  - format=simple only times in a table
  - format=fancy table with borders, error code and IP addresses or hostnames (hostname is fallback)
  - format=standard error codes with times 
+ - format=svg renders an svg image of the graph
+
+<img src="./graph.svg" />
 
 ### /vector
 

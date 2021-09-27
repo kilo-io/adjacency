@@ -19,6 +19,8 @@ import (
 
 	"github.com/kilo-io/adjacency_service/pkg/prober"
 
+	"github.com/goccy/go-graphviz"
+	"github.com/goccy/go-graphviz/cgraph"
 	"github.com/olekukonko/tablewriter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -398,6 +400,77 @@ func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 					return
 				}
 				w.Write([]byte(j))
+				return
+			case "svg":
+				err := func() error {
+					g := graphviz.New()
+					graph, err := g.Graph()
+					if err != nil {
+						return err
+					}
+					defer func() {
+						if err := graph.Close(); err != nil {
+							log.Println(err)
+							return
+						}
+						g.Close()
+					}()
+					nodes := make([]*cgraph.Node, len(m))
+					for i, v := range m {
+						var err error
+						nodes[i], err = graph.CreateNode(ipOrHost(v.IP, v.Host))
+						if err != nil {
+							return err
+						}
+					}
+					var targetNodes []*cgraph.Node
+					// Only draw one set of nodes because the srv record references the adjacency service,
+					// not some other service.
+					if target == srv {
+						targetNodes = nodes
+					} else if len(m) > 0 {
+						targetNodes = make([]*cgraph.Node, len(m[0].Latencies))
+						for i, l := range m[0].Latencies {
+							targetNodes[i], err = graph.CreateNode(ipOrHost(l.IP, l.Host))
+							if err != nil {
+								return err
+							}
+							targetNodes[i] = targetNodes[i].SetStyle(cgraph.DashedNodeStyle)
+						}
+					} else {
+						return err
+					}
+					for i, n := range nodes {
+						for j, tn := range targetNodes {
+							e, err := graph.CreateEdge(fmt.Sprintf("%d:%d", i, j), n, tn)
+							if err != nil {
+								return err
+							}
+							e.SetLabel(fmt.Sprint(m[i].Latencies[j].Duration))
+							var es cgraph.EdgeStyle
+							switch d := m[i].Latencies[j].Duration; {
+							case d > 10000000000: // > 10s
+								es = cgraph.DottedEdgeStyle
+							case d > 100000000: // > 100ms
+								es = cgraph.DashedEdgeStyle
+							case d > 10000000: // > 10ms
+								es = cgraph.SolidEdgeStyle
+							default: // <= 10ms
+								es = cgraph.BoldEdgeStyle
+							}
+							e.SetStyle(es)
+						}
+					}
+					w.Header().Add("content-type", "image/svg+xml")
+					if err := g.Render(graph, "svg", w); err != nil {
+						return err
+					}
+					return nil
+				}()
+				if err != nil {
+					log.Println(err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
 				return
 			default:
 				f = standard
