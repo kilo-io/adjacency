@@ -23,6 +23,7 @@ import (
 	"github.com/goccy/go-graphviz/cgraph"
 	"github.com/olekukonko/tablewriter"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -502,8 +503,8 @@ func main() {
 	r.MustRegister(
 		errorCounter,
 		requestCounter,
-		prometheus.NewGoCollector(),
-		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	m := http.NewServeMux()
 	mm := http.NewServeMux()
