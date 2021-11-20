@@ -37,19 +37,14 @@ const (
 )
 
 var (
-	srv         *string = flag.String("srv", "_service._proto.exmaple.com", "the srv record name to be used to look up IP addresses and port")
-	listenAddr  *string = flag.String("listen-address", ":3000", "The service will be listening to that address with port\ne.g. 172.0.0.1:3000")
-	metricsAddr *string = flag.String("metrics-address", ":9090", "The metrics server will be listening to that address with port\ne.g. 172.0.0.1:9090")
+	srv          *string        = flag.String("srv", "_service._proto.exmaple.com", "the srv record name to be used to look up IP addresses and port")
+	listenAddr   *string        = flag.String("listen-address", ":3000", "The service will be listening to that address with port\ne.g. 172.0.0.1:3000")
+	metricsAddr  *string        = flag.String("metrics-address", ":9090", "The metrics server will be listening to that address with port\ne.g. 172.0.0.1:9090")
+	timeout      *time.Duration = flag.Duration("timeout", 10*time.Second, "The time after a vector request to a node should be canceled.")
+	timeoutProbe *time.Duration = flag.Duration("timeout-probe", 0, "The time after a single probe should be canceled. If set, timeout will be ignored")
 )
 
-var (
-	httpVectorClient = http.Client{
-		Timeout: 10 * time.Second,
-	}
-	httpPingClient = http.Client{
-		Timeout: 5 * time.Second,
-	}
-)
+const dummy = "dummy"
 
 var (
 	requestCounter = prometheus.NewCounterVec(
@@ -74,6 +69,16 @@ type Latency struct {
 	Duration    time.Duration `json:"duration"`
 	Ok          bool          `json:"ok"`
 	Prober      string        `json:"prober"`
+}
+
+func (l Latency) String() string {
+	if l.Destination == dummy {
+		return ""
+	}
+	if l.Ok {
+		return l.Duration.String()
+	}
+	return "-"
 }
 
 type Vector struct {
@@ -130,8 +135,8 @@ func (m matrix) Pad() matrix {
 				continue
 			}
 			offset++
-			nV.Latencies[i].Destination = "dummy"
-			nV.Latencies[i].Ok = true
+			nV.Latencies[i].Destination = dummy
+			nV.Latencies[i].Ok = false
 		}
 		nm[k] = nV
 	}
@@ -163,7 +168,7 @@ func (m matrix) String(f format) string {
 		for _, v := range m {
 			line = []string{ipOrHost(v.IP, v.Host)}
 			for _, l := range v.Latencies {
-				line = append(line, fmt.Sprintf("%s code:%t", l.Duration.String(), l.Ok))
+				line = append(line, l.String())
 			}
 			data = append(data, line)
 		}
@@ -173,7 +178,7 @@ func (m matrix) String(f format) string {
 		for _, v := range m {
 			line := []string{}
 			for _, l := range v.Latencies {
-				line = append(line, l.Duration.String())
+				line = append(line, l.String())
 			}
 			data = append(data, line)
 		}
@@ -186,7 +191,7 @@ func (m matrix) String(f format) string {
 		for _, v := range m {
 			line := []string{}
 			for _, l := range v.Latencies {
-				line = append(line, fmt.Sprintf("%s code:%t", l.Duration.String(), l.Ok))
+				line = append(line, l.String())
 			}
 			data = append(data, line)
 		}
@@ -203,12 +208,14 @@ func (m matrix) String(f format) string {
 	return tableString.String()
 }
 
-func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL) *Latency {
+func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL, timeout time.Duration) *Latency {
 	var dur time.Duration
 	var err error
 	var p prober.Prober
 	for _, p = range probers {
-		if dur, err = p.Probe(ctx, *u); err == nil {
+		ctxT, cancelT := context.WithTimeout(ctx, timeout)
+		defer cancelT()
+		if dur, err = p.Probe(ctxT, *u); err == nil {
 			break
 		} else {
 			log.Printf("prober %s failed: %v", p.String(), err)
@@ -236,14 +243,14 @@ func timeHTTPRequest(ctx context.Context, probers []prober.Prober, u *url.URL) *
 	}
 }
 
-func getLatencies(ctx context.Context, probers []prober.Prober, urls []*url.URL) []*Latency {
+func getLatencies(ctx context.Context, probers []prober.Prober, urls []*url.URL, timeout time.Duration) []*Latency {
 	var wg sync.WaitGroup
 	lats := make([]*Latency, len(urls))
 	for i := range urls {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			lats[i] = timeHTTPRequest(ctx, probers, urls[i])
+			lats[i] = timeHTTPRequest(ctx, probers, urls[i], timeout)
 		}(i)
 	}
 	wg.Wait()
@@ -267,7 +274,7 @@ func resolveSRV(srv, path, query string) ([]*url.URL, error) {
 	return urls, nil
 }
 
-func vectorHandler(defaultSRV string, probers []prober.Prober) func(http.ResponseWriter, *http.Request) {
+func vectorHandler(defaultSRV string, probers []prober.Prober, timeout time.Duration) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		srv := defaultSRV
 		var err error
@@ -287,7 +294,7 @@ func vectorHandler(defaultSRV string, probers []prober.Prober) func(http.Respons
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		lats := getLatencies(r.Context(), probers, urls)
+		lats := getLatencies(r.Context(), probers, urls, timeout)
 		data, err := json.Marshal(lats)
 		if err != nil {
 			log.Printf("failed to marshal data: %v\n", err)
@@ -326,7 +333,7 @@ func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 	if err != nil {
 		return v, err
 	}
-	resp, err := httpVectorClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return v, fmt.Errorf("failed to make GET request: %w", err)
 	}
@@ -348,7 +355,7 @@ func getVectorFrom(ctx context.Context, url *url.URL) (*Vector, error) {
 	return v, nil
 }
 
-func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
+func collectAllHandler(srv string, timeout time.Duration) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := srv
 		// The srv target will be over written, if it is specified in the url query.
@@ -374,7 +381,9 @@ func collectAllHandler(srv string) func(http.ResponseWriter, *http.Request) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				vec, err := getVectorFrom(r.Context(), urls[i])
+				ctxT, cancelT := context.WithTimeout(r.Context(), timeout)
+				defer cancelT()
+				vec, err := getVectorFrom(ctxT, urls[i])
 				if err != nil {
 					errorCounter.Inc()
 					log.Printf("failed to get Vector from %s: %v\n", vec.Source, err)
@@ -498,7 +507,6 @@ func main() {
 		log.Printf("%q is not a valid srv record name\n", *srv)
 		return
 	}
-	probers := []prober.Prober{prober.NewHTTPPingProber(&httpPingClient), prober.NewHTTPProber(&httpPingClient), prober.NewTCPProber(), &prober.NoProber{}}
 	r := prometheus.NewRegistry()
 	r.MustRegister(
 		errorCounter,
@@ -506,12 +514,22 @@ func main() {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
+
+	probers := []prober.Prober{prober.NewHTTPPingProber(http.DefaultClient), prober.NewHTTPProber(http.DefaultClient), prober.NewTCPProber(), &prober.NoProber{}}
+	if *timeoutProbe != time.Duration(0) {
+		*timeout = time.Duration(len(probers)+1) * *timeoutProbe
+	} else {
+		*timeoutProbe = *timeout / time.Duration(len(probers)+1)
+	}
+
+	log.Printf("using timeout %v, using probe timeout %v\n", *timeout, timeoutProbe)
+
 	m := http.NewServeMux()
 	mm := http.NewServeMux()
 	mm.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
-	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv, probers)))
+	m.HandleFunc("/vector", metricsMiddleWare("/vector", vectorHandler(*srv, probers, *timeoutProbe)))
 	m.HandleFunc("/ping", metricsMiddleWare("/ping", pingHandler))
-	m.HandleFunc("/", metricsMiddleWare("/", collectAllHandler(*srv)))
+	m.HandleFunc("/", metricsMiddleWare("/", collectAllHandler(*srv, *timeout)))
 	go http.ListenAndServe(*metricsAddr, mm)
 	log.Printf("listening on %s\n", *listenAddr)
 	log.Fatal(http.ListenAndServe(*listenAddr, m))
