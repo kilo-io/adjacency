@@ -33,7 +33,6 @@ func TestPad(t *testing.T) {
 		IP:          "10.0.0.4",
 	}
 	ld := Latency{
-		Ok:          true,
 		Destination: "dummy",
 	}
 	v1 := Vector{
@@ -125,7 +124,6 @@ func TestPad(t *testing.T) {
 					Latencies: []Latency{
 						{
 							Destination: "dummy",
-							Ok:          true,
 						},
 						{
 							Destination: "2",
@@ -154,7 +152,6 @@ func TestPad(t *testing.T) {
 						},
 						{
 							Destination: "dummy",
-							Ok:          true,
 						},
 						{
 							Destination: "3",
@@ -163,7 +160,6 @@ func TestPad(t *testing.T) {
 						},
 						{
 							Destination: "dummy",
-							Ok:          true,
 						},
 					},
 				},
