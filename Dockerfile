@@ -1,4 +1,4 @@
-FROM golang:alpine as build
+FROM golang:1.18-alpine as build
 RUN apk --no-cach add gcc libc-dev
 WORKDIR /adjacency
 COPY . /adjacency
