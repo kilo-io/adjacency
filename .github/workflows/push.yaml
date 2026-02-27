@@ -33,6 +33,6 @@ jobs:
         with:
           push: true
           platforms: linux/arm64, linux/arm, linux/amd64
-          tags: kiloio/adjacency:latest, kiloio/adjacency:${{ steps.sha.outputs.sha }} ghcr.io/kilo-io/adjacency:latest ghcr.io/kilo-io/adjacency:${{ steps.sha.outputs.sha }}
+          tags: kiloio/adjacency:latest, kiloio/adjacency:${{ steps.sha.outputs.sha }}, ghcr.io/kilo-io/adjacency:latest, ghcr.io/kilo-io/adjacency:${{ steps.sha.outputs.sha }}
       - name: Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
