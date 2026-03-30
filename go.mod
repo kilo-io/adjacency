@@ -1,6 +1,6 @@
 module github.com/kilo-io/adjacency_service
 
-go 1.18
+go 1.25.0
 
 require (
 	github.com/goccy/go-graphviz v0.0.10-0.20210831024656-b9dc53bc0618
@@ -24,7 +24,7 @@ require (
 	github.com/prometheus/common v0.34.0 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	golang.org/x/image v0.18.0 // indirect
+	golang.org/x/image v0.38.0 // indirect
 	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 )
